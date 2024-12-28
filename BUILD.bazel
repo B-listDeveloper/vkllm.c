@@ -1,0 +1,26 @@
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+load(":shader.bzl", "glsl_shader")
+
+glsl_shader(
+    name = "shaders",
+    srcs = glob(["shaders/*"]),
+)
+
+cc_binary(
+    name = "matmul_forward",
+    srcs = glob([
+        "**/*.c",
+    ]),
+    copts = [
+        "-O3",
+        "-fopenmp",
+    ],
+    linkopts = [
+        "-lgomp",
+        "-lm",
+        "-lvulkan",
+    ],
+    data = [
+        ":shaders",
+    ],
+)
