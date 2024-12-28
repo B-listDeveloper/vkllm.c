@@ -17,13 +17,11 @@ And don't forget to install GPU driver.
 
 ## Usage
 
-I only added `matmul_forward` for now, and you can test it by running:
+I only added a few layers for now, and you can test those by running bazel rules like:
 
 ```bash
 bazel run :matmul_forward -- 1
 ```
-
-Many more to come...
 
 ## Notes
 

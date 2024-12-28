@@ -1,16 +1,11 @@
 load("@rules_cc//cc:defs.bzl", "cc_binary")
 load(":shader.bzl", "glsl_shader")
 
-glsl_shader(
-    name = "shaders",
-    srcs = glob(["shaders/*"]),
-)
-
 cc_binary(
-    name = "matmul_forward",
-    srcs = glob([
-        "**/*.c",
-    ]),
+    name = "layernorm_forward",
+    srcs = [
+        "vulkan/layernorm_forward.c",
+    ],
     copts = [
         "-O3",
         "-fopenmp",
@@ -21,6 +16,35 @@ cc_binary(
         "-lvulkan",
     ],
     data = [
-        ":shaders",
+        ":layernorm_shaders",
     ],
+)
+
+glsl_shader(
+    name = "layernorm_shaders",
+    srcs = glob(["shaders/layernorm*.glsl"]),
+)
+
+cc_binary(
+    name = "matmul_forward",
+    srcs = [
+        "vulkan/matmul_forward.c",
+    ],
+    copts = [
+        "-O3",
+        "-fopenmp",
+    ],
+    linkopts = [
+        "-lgomp",
+        "-lm",
+        "-lvulkan",
+    ],
+    data = [
+        ":matmul_shaders",
+    ],
+)
+
+glsl_shader(
+    name = "matmul_shaders",
+    srcs = glob(["shaders/matmul*.glsl"]),
 )
