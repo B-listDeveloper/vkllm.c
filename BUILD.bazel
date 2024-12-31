@@ -1,50 +1,5 @@
-load("@rules_cc//cc:defs.bzl", "cc_binary")
-load(":shader.bzl", "glsl_shader")
+load(":macro.bzl", "test_shader")
 
-cc_binary(
-    name = "layernorm_forward",
-    srcs = [
-        "vulkan/layernorm_forward.c",
-    ],
-    copts = [
-        "-O3",
-        "-fopenmp",
-    ],
-    linkopts = [
-        "-lgomp",
-        "-lm",
-        "-lvulkan",
-    ],
-    data = [
-        ":layernorm_shaders",
-    ],
-)
+test_shader(name = "layernorm_forward")
 
-glsl_shader(
-    name = "layernorm_shaders",
-    srcs = glob(["shaders/layernorm*.glsl"]),
-)
-
-cc_binary(
-    name = "matmul_forward",
-    srcs = [
-        "vulkan/matmul_forward.c",
-    ],
-    copts = [
-        "-O3",
-        "-fopenmp",
-    ],
-    linkopts = [
-        "-lgomp",
-        "-lm",
-        "-lvulkan",
-    ],
-    data = [
-        ":matmul_shaders",
-    ],
-)
-
-glsl_shader(
-    name = "matmul_shaders",
-    srcs = glob(["shaders/matmul*.glsl"]),
-)
+test_shader(name = "matmul_forward")
