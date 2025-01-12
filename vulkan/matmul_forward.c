@@ -3,10 +3,8 @@ bazel run :matmul_forward -- 1
 */
 #include <math.h>
 #include <omp.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <vulkan/vulkan.h>
+
+#include "common.h"
 
 // ----------------------------------------------------------------------------
 // CPU code reference
@@ -62,90 +60,10 @@ int main(int argc, char** argv) {
     }
     printf("Using shader %d\n", shader_num);
 
-    char filename[50];
-    sprintf(filename, "shaders/matmul_forward_shader%d.spv", shader_num);
+    char* filename = "shaders/matmul_forward_shader1.spv";
 
-    VkApplicationInfo appInfo = {0};
-    appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
-    appInfo.pApplicationName = "Vulkan Compute Shader Matrix Multiplication";
-    appInfo.applicationVersion = 0;
-    appInfo.pEngineName = NULL;
-    appInfo.engineVersion = 0;
-    appInfo.apiVersion = VK_API_VERSION_1_3;
-
-    VkInstanceCreateInfo instanceCreateInfo = {0};
-    instanceCreateInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
-    instanceCreateInfo.pApplicationInfo = &appInfo;
-
-    VkInstance instance;
-    if (vkCreateInstance(&instanceCreateInfo, NULL, &instance) != VK_SUCCESS) {
-        printf("Failed to create an instance!\n");
-        exit(EXIT_FAILURE);
-    }
-
-    uint32_t deviceCount = 0;
-    vkEnumeratePhysicalDevices(instance, &deviceCount, NULL);
-    if (deviceCount == 0) {
-        printf("Failed to find GPUs with Vulkan support!\n");
-        exit(EXIT_FAILURE);
-    }
-
-    VkPhysicalDevice pDevices[deviceCount];
-    vkEnumeratePhysicalDevices(instance, &deviceCount, pDevices);
-
-    uint32_t queueFamilyIdx;
-    VkPhysicalDevice pDevice = VK_NULL_HANDLE;
-    for (uint32_t i = 0; i < deviceCount; i++) {
-        VkPhysicalDevice* device = &pDevices[i];
-
-        uint32_t queueFamilyCount = 0;
-        vkGetPhysicalDeviceQueueFamilyProperties(*device, &queueFamilyCount, NULL);
-        VkQueueFamilyProperties queueFamilies[queueFamilyCount];
-        vkGetPhysicalDeviceQueueFamilyProperties(*device, &queueFamilyCount, queueFamilies);
-
-        for (queueFamilyIdx = 0; queueFamilyIdx < queueFamilyCount; queueFamilyIdx++) {
-            if (queueFamilies[queueFamilyIdx].queueFlags & VK_QUEUE_COMPUTE_BIT) {
-                break;
-            }
-        }
-
-        if (queueFamilyIdx < queueFamilyCount) {
-            pDevice = pDevices[i];
-            break;
-        }
-    }
-
-    if (pDevice == VK_NULL_HANDLE) {
-        printf("Failed to find a suitable GPU!\n");
-        exit(EXIT_FAILURE);
-    }
-
-    VkPhysicalDeviceProperties pDeviceProperties;
-    vkGetPhysicalDeviceProperties(pDevice, &pDeviceProperties);
-    printf("Device Name: %s\n", pDeviceProperties.deviceName);
-    const uint32_t apiVersion = pDeviceProperties.apiVersion;
-    printf("Vulkan Version: %d.%d.%d\n", VK_API_VERSION_MAJOR(apiVersion), VK_API_VERSION_MINOR(apiVersion), VK_API_VERSION_PATCH(apiVersion));
-    const uint32_t shmSize = pDeviceProperties.limits.maxComputeSharedMemorySize / 1024;
-    printf("Max Compute Shared Memory Size: %d KB\n", shmSize);
-    printf("Compute Queue Family Index: %d\n", queueFamilyIdx);
-
-    const float priority = 1.0f;
-    VkDeviceQueueCreateInfo queueCreateInfo = {0};
-    queueCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
-    queueCreateInfo.queueFamilyIndex = queueFamilyIdx;
-    queueCreateInfo.queueCount = 1;
-    queueCreateInfo.pQueuePriorities = &priority;
-
-    VkDeviceCreateInfo deviceCreateInfo = {0};
-    deviceCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
-    deviceCreateInfo.pQueueCreateInfos = &queueCreateInfo;
-    deviceCreateInfo.queueCreateInfoCount = 1;
-
-    VkDevice device;
-    if (vkCreateDevice(pDevice, &deviceCreateInfo, NULL, &device) != VK_SUCCESS) {
-        printf("Failed to create logical device!\n");
-        exit(EXIT_FAILURE);
-    }
+    Context context;
+    init_context(&context);
 
     // memory allocation
     const int32_t B = 8;
@@ -153,121 +71,55 @@ int main(int argc, char** argv) {
     const int32_t C = 768;
     const int32_t OC = 768 * 4;  // expansion of 4, e.g. in the MLP
 
-    const uint32_t outSize = B * T * OC * sizeof(float);
-    const uint32_t inpSize = B * T * C * sizeof(float);
-    const uint32_t weightSize = OC * C * sizeof(float);
-    const uint32_t biasSize = OC * sizeof(float);
+    const uint32_t out_size = B * T * OC * sizeof(float);
+    const uint32_t inp_size = B * T * C * sizeof(float);
+    const uint32_t weight_size = OC * C * sizeof(float);
+    const uint32_t bias_size = OC * sizeof(float);
 
-    float* out = (float*)malloc(outSize);
-    float* inp = make_random_float(inpSize / sizeof(float));
-    float* weight = make_random_float(weightSize / sizeof(float));
-    float* bias = make_random_float(biasSize / sizeof(float));
-
-    uint32_t tensorSizes[] = { outSize, inpSize, weightSize, biasSize };
-    uint32_t numTensors = sizeof(tensorSizes) / sizeof(uint32_t);
-    uint32_t offsets[numTensors];
-    uint32_t totalBufferSize = 0;
-    for (int i = 0; i < numTensors; i++) {
-        offsets[i] = totalBufferSize;
-        totalBufferSize += tensorSizes[i];
+    uint32_t sizes[] = { out_size, inp_size, weight_size, bias_size };
+    uint32_t num_tensors = sizeof(sizes) / sizeof(uint32_t);
+    uint32_t offsets[num_tensors];
+    for (int i = 0; i < num_tensors; i++) {
+        offsets[i] = i == 0 ? 0 : offsets[i - 1] + sizes[i - 1];
     }
 
-    VkBufferCreateInfo bufferCreateInfo = {0};
-    bufferCreateInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-    bufferCreateInfo.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
-    bufferCreateInfo.size = totalBufferSize;
-    bufferCreateInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    bufferCreateInfo.queueFamilyIndexCount = 1;
-    bufferCreateInfo.pQueueFamilyIndices = &queueFamilyIdx;
+    Memory memory;
+    allocate_memory(&context, &memory, num_tensors, sizes);
 
-    VkBuffer buffer;
-    if (vkCreateBuffer(device, &bufferCreateInfo, NULL, &buffer) != VK_SUCCESS) {
-        printf("Failed to create buffer!\n");
-        exit(EXIT_FAILURE);
-    }
+    float* out = (float*)malloc(out_size);
+    float* inp = make_random_float(inp_size / sizeof(float));
+    float* weight = make_random_float(weight_size / sizeof(float));
+    float* bias = make_random_float(bias_size / sizeof(float));
 
-    VkMemoryRequirements bufferMemReqs;
-    vkGetBufferMemoryRequirements(device, buffer, &bufferMemReqs);
+    float* d_out;
+    float* d_inp;
+    float* d_weight;
+    float* d_bias;
 
-    VkPhysicalDeviceMemoryProperties memProperties;
-    vkGetPhysicalDeviceMemoryProperties(pDevice, &memProperties);
+    vkMapMemory(context.device.logical_device, memory.heap, offsets[0], sizes[0], 0, (void**)&d_out);
+    vkMapMemory(context.device.logical_device, memory.heap, offsets[1], sizes[1], 0, (void**)&d_inp);
+    vkMapMemory(context.device.logical_device, memory.heap, offsets[2], sizes[2], 0, (void**)&d_weight);
+    vkMapMemory(context.device.logical_device, memory.heap, offsets[3], sizes[3], 0, (void**)&d_bias);
+    memcpy(d_out, out, out_size);
+    memcpy(d_inp, inp, inp_size);
+    memcpy(d_weight, weight, weight_size);
+    memcpy(d_bias, bias, bias_size);
 
-    uint32_t memoryTypeIndex = ~0;
-    VkDeviceSize heapSize = ~0;
-    for (int i = 0; i < memProperties.memoryTypeCount; i++) {
-        VkMemoryType* t = &memProperties.memoryTypes[i];
-        if ((VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT & t->propertyFlags) &&
-                (VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT & t->propertyFlags) &&
-                (VK_MEMORY_PROPERTY_HOST_COHERENT_BIT & t->propertyFlags)) {
-            heapSize = memProperties.memoryHeaps[t->heapIndex].size;
-            memoryTypeIndex = i;
-            break;
-        }
-    }
-    printf("Memory Type Index: %d\n", memoryTypeIndex);
-    printf("Memory Heap Size: %lu GB\n", heapSize / 1024 / 1024 / 1024);
+    Kernel kernel;
+    init_kernel(&context, &memory, &kernel);
+    append_shader(&context, &kernel, filename, (Workgroup){16, 16, 1});
 
-    VkMemoryAllocateInfo mallocInfo = {0};
-    mallocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    mallocInfo.allocationSize = bufferMemReqs.size;
-    mallocInfo.memoryTypeIndex = memoryTypeIndex;
+    Launcher launcher;
+    init_launcher(&context, &launcher);
 
-    VkDeviceMemory deviceMem;
-    if (vkAllocateMemory(device, &mallocInfo, NULL, &deviceMem) != VK_SUCCESS) {
-        printf("Failed to allocate memory!\n");
-        exit(EXIT_FAILURE);
-    }
+    VkQueryPoolCreateInfo queryPoolCreateInfo = {0};
+    queryPoolCreateInfo.sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO;
+    queryPoolCreateInfo.queryType = VK_QUERY_TYPE_TIMESTAMP;
+    queryPoolCreateInfo.queryCount = 2;  // start and stop
 
-    vkBindBufferMemory(device, buffer, deviceMem, 0);
-
-    void* d_out;
-    void* d_inp;
-    void* d_weight;
-    void* d_bias;
-    vkMapMemory(device, deviceMem, offsets[0], outSize, 0, &d_out);
-    vkMapMemory(device, deviceMem, offsets[1], inpSize, 0, &d_inp);
-    vkMapMemory(device, deviceMem, offsets[2], weightSize, 0, &d_weight);
-    vkMapMemory(device, deviceMem, offsets[3], biasSize, 0, &d_bias);
-
-    memcpy((float*)d_out, out, outSize);
-    memcpy((float*)d_inp, inp, inpSize);
-    memcpy((float*)d_weight, weight, weightSize);
-    memcpy((float*)d_bias, bias, biasSize);
-
-    FILE* shaderFile = fopen(filename, "rb");
-    fseek(shaderFile, 0, SEEK_END);
-    uint32_t shaderFileSize = ftell(shaderFile);
-    fseek(shaderFile, 0, SEEK_SET);
-    char shaderContents[shaderFileSize];
-    fread(shaderContents, sizeof(char), shaderFileSize, shaderFile);
-    fclose(shaderFile);
-
-    VkShaderModuleCreateInfo shaderModuleCreateInfo = {0};
-    shaderModuleCreateInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
-    shaderModuleCreateInfo.pCode = (uint32_t*)shaderContents;
-    shaderModuleCreateInfo.codeSize = shaderFileSize;
-
-    VkShaderModule shaderModule;
-    if (vkCreateShaderModule(device, &shaderModuleCreateInfo, NULL, &shaderModule) != VK_SUCCESS) {
-        printf("Failed to create shader module!\n");
-        exit(EXIT_FAILURE);
-    }
-
-    VkDescriptorSetLayoutBinding layoutBindings[numTensors];
-    for (uint32_t i = 0; i < numTensors; i++) {
-        layoutBindings[i] = (VkDescriptorSetLayoutBinding){
-            i, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, NULL
-        };
-    }
-
-    VkDescriptorSetLayoutCreateInfo layoutInfo = {0};
-    layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    layoutInfo.bindingCount = numTensors;
-    layoutInfo.pBindings = layoutBindings;
-
-    VkDescriptorSetLayout computeDescriptorSetLayout;
-    if (vkCreateDescriptorSetLayout(device, &layoutInfo, NULL, &computeDescriptorSetLayout) != VK_SUCCESS) {
-        printf("Failed to create compute descriptor set layout!\n");
+    VkQueryPool queryPool;
+    if (vkCreateQueryPool(context.device.logical_device, &queryPoolCreateInfo, NULL, &queryPool) != VK_SUCCESS) {
+        printf("Failed to create query pool!\n");
         exit(EXIT_FAILURE);
     }
 
@@ -278,154 +130,26 @@ int main(int argc, char** argv) {
         uint32_t OC;
     } shapes = { B, T, C, OC };
 
-    VkPushConstantRange pushConstantRange = {0};
-    pushConstantRange.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
-    pushConstantRange.offset = 0;
-    pushConstantRange.size = sizeof(shapes);
+    vkResetCommandBuffer(launcher.command_buffer, 0);
+    vkBeginCommandBuffer(launcher.command_buffer, &launcher.begin_info);
 
-    VkPipelineLayoutCreateInfo pipelineLayoutCreateInfo = {0};
-    pipelineLayoutCreateInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    pipelineLayoutCreateInfo.setLayoutCount = 1;
-    pipelineLayoutCreateInfo.pSetLayouts = &computeDescriptorSetLayout;
-    pipelineLayoutCreateInfo.pushConstantRangeCount = 1;
-    pipelineLayoutCreateInfo.pPushConstantRanges = &pushConstantRange;
+    vkCmdResetQueryPool(launcher.command_buffer, queryPool, 0, 2);
+    vkCmdWriteTimestamp(launcher.command_buffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, queryPool, 0);
 
-    VkPipelineLayout pipelineLayout;
-    vkCreatePipelineLayout(device, &pipelineLayoutCreateInfo, NULL, &pipelineLayout);
+    vkCmdBindPipeline(launcher.command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, kernel.pipeline);
+    vkCmdBindDescriptorSets(launcher.command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, kernel.layout, 0, 1, &memory.set, 0, NULL);
+    vkCmdPushConstants(launcher.command_buffer, kernel.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(shapes), &shapes);
+    vkCmdDispatch(launcher.command_buffer, B * T / 16, OC / 16, 1);
 
-    // necessary?
-    VkPipelineCacheCreateInfo pipelineCacheCreateInfo = {0};
-    pipelineCacheCreateInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO;
-
-    VkPipelineCache pipelineCache;
-    vkCreatePipelineCache(device, &pipelineCacheCreateInfo, NULL, &pipelineCache);
-
-    struct {
-        uint32_t workgroup_x;
-        uint32_t workgroup_y;
-    } wgSizes = { 16, 16 };
-
-    VkSpecializationMapEntry entries[] = {
-        { 1, 0, 4 },
-        { 2, 4, 4 },
-    };
-
-    VkSpecializationInfo specializationInfo = {0};
-    specializationInfo.mapEntryCount = 2;
-    specializationInfo.pMapEntries = entries;
-    specializationInfo.dataSize = sizeof(wgSizes);
-    specializationInfo.pData = &wgSizes;
-
-    VkComputePipelineCreateInfo computePipelineCreateInfo = {0};
-    computePipelineCreateInfo.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
-    computePipelineCreateInfo.stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    computePipelineCreateInfo.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
-    computePipelineCreateInfo.stage.module = shaderModule;
-    computePipelineCreateInfo.stage.pName = "main";
-    computePipelineCreateInfo.stage.pSpecializationInfo = &specializationInfo;
-    computePipelineCreateInfo.layout = pipelineLayout;
-
-    VkPipeline computePipeline;
-    vkCreateComputePipelines(device, pipelineCache, 1, &computePipelineCreateInfo, NULL, &computePipeline);
-
-    VkDescriptorPoolSize poolSizes[] = {
-        { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, numTensors },
-    };
-
-    VkDescriptorPoolCreateInfo poolInfo = {0};
-    poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-    poolInfo.maxSets = 1;  // how many sets to be allocated
-    poolInfo.poolSizeCount = 1;
-    poolInfo.pPoolSizes = poolSizes;
-
-    VkDescriptorPool descriptorPool;
-    if (vkCreateDescriptorPool(device, &poolInfo, NULL, &descriptorPool) != VK_SUCCESS) {
-        printf("Failed to create descriptor pool!\n");
-        exit(EXIT_FAILURE);
-    }
-
-    VkDescriptorSetAllocateInfo allocInfo = {0};
-    allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-    allocInfo.descriptorPool = descriptorPool;
-    allocInfo.descriptorSetCount = 1;
-    allocInfo.pSetLayouts = &computeDescriptorSetLayout;
-
-    VkDescriptorSet computeDescriptorSet;
-    if (vkAllocateDescriptorSets(device, &allocInfo, &computeDescriptorSet) != VK_SUCCESS) {
-        printf("Failed to allocate descriptor sets!\n");
-        exit(EXIT_FAILURE);
-    }
-
-    VkDescriptorBufferInfo bufferInfo[numTensors];
-    VkWriteDescriptorSet writeDescSets[numTensors];
-    for (uint32_t i = 0; i < numTensors; i++) {
-        bufferInfo[i] = (VkDescriptorBufferInfo){ buffer, offsets[i], tensorSizes[i] };
-        writeDescSets[i] = (VkWriteDescriptorSet){
-            VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, NULL, computeDescriptorSet,
-            i, 0, 1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, NULL, &bufferInfo[i], NULL
-        };
-    }
-    vkUpdateDescriptorSets(device, numTensors, writeDescSets, 0, NULL);
-
-    VkCommandPoolCreateInfo commandPoolCreateInfo = {0};
-    commandPoolCreateInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
-    commandPoolCreateInfo.queueFamilyIndex = queueFamilyIdx;
-
-    VkCommandPool commandPool;
-    vkCreateCommandPool(device, &commandPoolCreateInfo, NULL, &commandPool);
-
-    VkCommandBufferAllocateInfo commandBufferAllocInfo = {0};
-    commandBufferAllocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-    commandBufferAllocInfo.commandPool = commandPool;
-    commandBufferAllocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    commandBufferAllocInfo.commandBufferCount = 1;
-
-    VkCommandBuffer commandBuffer;
-    vkAllocateCommandBuffers(device, &commandBufferAllocInfo, &commandBuffer);
-
-    VkCommandBufferBeginInfo commandBufferBeginInfo = {0};
-    commandBufferBeginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-    commandBufferBeginInfo.flags = VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT;
-
-    VkQueryPoolCreateInfo queryPoolCreateInfo = {0};
-    queryPoolCreateInfo.sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO;
-    queryPoolCreateInfo.queryType = VK_QUERY_TYPE_TIMESTAMP;
-    queryPoolCreateInfo.queryCount = 2;  // start and stop
-
-    VkQueryPool queryPool;
-    if (vkCreateQueryPool(device, &queryPoolCreateInfo, NULL, &queryPool) != VK_SUCCESS) {
-        printf("Failed to create query pool!\n");
-        exit(EXIT_FAILURE);
-    }
-
-    vkResetCommandBuffer(commandBuffer, 0);
-
-    vkBeginCommandBuffer(commandBuffer, &commandBufferBeginInfo);
-    vkCmdResetQueryPool(commandBuffer, queryPool, 0, 2);
-    vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, queryPool, 0);
-
-    vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, computePipeline);
-    vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout, 0, 1, &computeDescriptorSet, 0, NULL);
-    vkCmdPushConstants(commandBuffer, pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(shapes), &shapes);
-    vkCmdDispatch(commandBuffer, B * T / 16, OC / 16, 1);
-
-    vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, queryPool, 1);
-    vkEndCommandBuffer(commandBuffer);
-
-    VkSubmitInfo submitInfo = {0};
-    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-    submitInfo.commandBufferCount = 1;
-    submitInfo.pCommandBuffers = &commandBuffer;
-
-    VkQueue queue;
-    vkGetDeviceQueue(device, queueFamilyIdx, 0, &queue);
-
-    vkQueueSubmit(queue, 1, &submitInfo, VK_NULL_HANDLE);
-    vkQueueWaitIdle(queue);
+    vkCmdWriteTimestamp(launcher.command_buffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, queryPool, 1);
+    vkEndCommandBuffer(launcher.command_buffer);
 
     matmul_forward_cpu(out, inp, weight, bias, B, T, C, OC);
-    float* out_gpu = (float*)malloc(outSize);
-    memcpy(out_gpu, d_out, outSize);
+    vkQueueSubmit(launcher.queue, 1, &launcher.submit_info, VK_NULL_HANDLE);
+    vkQueueWaitIdle(launcher.queue);
+
+    float* out_gpu = (float*)malloc(out_size);
+    memcpy(out_gpu, d_out, out_size);
     for (int i = 0; i < B * T * OC; i++) {
         // print the first few comparisons
         if (i < 5) {
@@ -446,36 +170,37 @@ int main(int argc, char** argv) {
     for (int j = 0; j < sizeof(sqrt_block_sizes) / sizeof(int); j++) {
         int sqrt_block_size = sqrt_block_sizes[j];
 
-        wgSizes.workgroup_x = wgSizes.workgroup_y = sqrt_block_size;
-        // Is no destruction needed before re-creation?
-        vkCreateComputePipelines(device, pipelineCache, 1, &computePipelineCreateInfo, NULL, &computePipeline);
+        destroy_kernel(&context, &kernel);
+        init_kernel(&context, &memory, &kernel);
+        append_shader(&context, &kernel, filename,
+                      (Workgroup){ sqrt_block_size, sqrt_block_size, 1 });
 
-        vkResetCommandBuffer(commandBuffer, 0);
+        vkResetCommandBuffer(launcher.command_buffer, 0);
+        vkBeginCommandBuffer(launcher.command_buffer, &launcher.begin_info);
 
-        vkBeginCommandBuffer(commandBuffer, &commandBufferBeginInfo);
-        vkCmdResetQueryPool(commandBuffer, queryPool, 0, 2);
-        vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, queryPool, 0);
+        vkCmdResetQueryPool(launcher.command_buffer, queryPool, 0, 2);
+        vkCmdWriteTimestamp(launcher.command_buffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, queryPool, 0);
 
-        vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, computePipeline);
-        vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout, 0, 1, &computeDescriptorSet, 0, NULL);
-        vkCmdPushConstants(commandBuffer, pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(shapes), &shapes);
-        vkCmdDispatch(commandBuffer, B * T / sqrt_block_size, OC / sqrt_block_size, 1);
+        vkCmdBindPipeline(launcher.command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, kernel.pipeline);
+        vkCmdBindDescriptorSets(launcher.command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, kernel.layout, 0, 1, &memory.set, 0, NULL);
+        vkCmdPushConstants(launcher.command_buffer, kernel.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(shapes), &shapes);
+        vkCmdDispatch(launcher.command_buffer, B * T / sqrt_block_size, OC / sqrt_block_size, 1);
 
-        vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, queryPool, 1);
-        vkEndCommandBuffer(commandBuffer);
+        vkCmdWriteTimestamp(launcher.command_buffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, queryPool, 1);
+        vkEndCommandBuffer(launcher.command_buffer);
 
         uint64_t elapsed_ns = 0;
         uint64_t times[2];
         for (int i = 0; i < repeat_times; i++) {
-            vkQueueSubmit(queue, 1, &submitInfo, VK_NULL_HANDLE);
-            vkQueueWaitIdle(queue);
-            vkGetQueryPoolResults(device, queryPool, 0, 2, 2 * sizeof(uint64_t), times, sizeof(uint64_t), VK_QUERY_RESULT_64_BIT);
+            vkQueueSubmit(launcher.queue, 1, &launcher.submit_info, VK_NULL_HANDLE);
+            vkQueueWaitIdle(launcher.queue);
+            vkGetQueryPoolResults(context.device.logical_device, queryPool, 0, 2, 2 * sizeof(uint64_t), times, sizeof(uint64_t), VK_QUERY_RESULT_64_BIT);
             elapsed_ns += times[1] - times[0];
         }
         float elapsed_time = (float)elapsed_ns / 1e6;
 
         // double-check if the result is correct
-        memcpy(out_gpu, d_out, outSize);
+        memcpy(out_gpu, d_out, out_size);
         for (int i = 0; i < B * T * OC; i++) {
             if (fabsf(out[i] - out_gpu[i]) > 1e-4) {
                 printf("Mismatch at %d: %f vs %f\n", i, out[i], out_gpu[i]);
@@ -489,23 +214,15 @@ int main(int argc, char** argv) {
         printf("sqrt_block_size %4d | time %f ms | tflops %f\n", sqrt_block_size, elapsed_time, tflops);
     }
 
-    vkUnmapMemory(device, deviceMem);
+    vkUnmapMemory(context.device.logical_device, memory.heap);
     d_out = d_inp = d_weight = d_bias = NULL;
 
-    vkDestroyQueryPool(device, queryPool, NULL);
-    vkFreeCommandBuffers(device, commandPool, 1, &commandBuffer);
-    vkDestroyCommandPool(device, commandPool, NULL);
-    vkDestroyPipeline(device, computePipeline, NULL);
-    vkDestroyPipelineCache(device, pipelineCache, NULL);
-    vkDestroyPipelineLayout(device, pipelineLayout, NULL);
-    vkDestroyShaderModule(device, shaderModule, NULL);
-    vkFreeDescriptorSets(device, descriptorPool, 1, &computeDescriptorSet);
-    vkDestroyDescriptorPool(device, descriptorPool, NULL);
-    vkDestroyDescriptorSetLayout(device, computeDescriptorSetLayout, NULL);
-    vkFreeMemory(device, deviceMem, NULL);
-    vkDestroyBuffer(device, buffer, NULL);
-    vkDestroyDevice(device, NULL);
-    vkDestroyInstance(instance, NULL);
+    vkDestroyQueryPool(context.device.logical_device, queryPool, NULL);
+
+    destroy_launcher(&context, &launcher);
+    destroy_kernel(&context, &kernel);
+    free_memory(&context, &memory);
+    destroy_context(&context);
 
     free(out);
     free(inp);
