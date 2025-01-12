@@ -107,47 +107,16 @@ int main(int argc, char** argv) {
 
     Kernel kernel;
     init_kernel(&context, &memory, &kernel);
-    append_shader(&context, &kernel, filename, (Workgroup){16, 16, 1});
+    append_shader(&context, &kernel, filename, (Group){16, 16, 1});
 
     Launcher launcher;
     init_launcher(&context, &launcher);
 
-    VkQueryPoolCreateInfo queryPoolCreateInfo = {0};
-    queryPoolCreateInfo.sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO;
-    queryPoolCreateInfo.queryType = VK_QUERY_TYPE_TIMESTAMP;
-    queryPoolCreateInfo.queryCount = 2;  // start and stop
-
-    VkQueryPool queryPool;
-    if (vkCreateQueryPool(context.device.logical_device, &queryPoolCreateInfo, NULL, &queryPool) != VK_SUCCESS) {
-        printf("Failed to create query pool!\n");
-        exit(EXIT_FAILURE);
-    }
-
-    struct {
-        uint32_t B;
-        uint32_t T;
-        uint32_t C;
-        uint32_t OC;
-    } shapes = { B, T, C, OC };
-
-    vkResetCommandBuffer(launcher.command_buffer, 0);
-    vkBeginCommandBuffer(launcher.command_buffer, &launcher.begin_info);
-
-    vkCmdResetQueryPool(launcher.command_buffer, queryPool, 0, 2);
-    vkCmdWriteTimestamp(launcher.command_buffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, queryPool, 0);
-
-    vkCmdBindPipeline(launcher.command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, kernel.pipeline);
-    vkCmdBindDescriptorSets(launcher.command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, kernel.layout, 0, 1, &memory.set, 0, NULL);
-    vkCmdPushConstants(launcher.command_buffer, kernel.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(shapes), &shapes);
-    vkCmdDispatch(launcher.command_buffer, B * T / 16, OC / 16, 1);
-
-    vkCmdWriteTimestamp(launcher.command_buffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, queryPool, 1);
-    vkEndCommandBuffer(launcher.command_buffer);
+    uint32_t shapes[] = { B, T, C, OC };
+    launch_kernel(&context, &memory, &kernel, &launcher,
+                  4, shapes, (Group){B * T / 16, OC / 16, 1}, false);
 
     matmul_forward_cpu(out, inp, weight, bias, B, T, C, OC);
-    vkQueueSubmit(launcher.queue, 1, &launcher.submit_info, VK_NULL_HANDLE);
-    vkQueueWaitIdle(launcher.queue);
-
     float* out_gpu = (float*)malloc(out_size);
     memcpy(out_gpu, d_out, out_size);
     for (int i = 0; i < B * T * OC; i++) {
@@ -173,28 +142,15 @@ int main(int argc, char** argv) {
         destroy_kernel(&context, &kernel);
         init_kernel(&context, &memory, &kernel);
         append_shader(&context, &kernel, filename,
-                      (Workgroup){ sqrt_block_size, sqrt_block_size, 1 });
-
-        vkResetCommandBuffer(launcher.command_buffer, 0);
-        vkBeginCommandBuffer(launcher.command_buffer, &launcher.begin_info);
-
-        vkCmdResetQueryPool(launcher.command_buffer, queryPool, 0, 2);
-        vkCmdWriteTimestamp(launcher.command_buffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, queryPool, 0);
-
-        vkCmdBindPipeline(launcher.command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, kernel.pipeline);
-        vkCmdBindDescriptorSets(launcher.command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, kernel.layout, 0, 1, &memory.set, 0, NULL);
-        vkCmdPushConstants(launcher.command_buffer, kernel.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(shapes), &shapes);
-        vkCmdDispatch(launcher.command_buffer, B * T / sqrt_block_size, OC / sqrt_block_size, 1);
-
-        vkCmdWriteTimestamp(launcher.command_buffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, queryPool, 1);
-        vkEndCommandBuffer(launcher.command_buffer);
+                      (Group){sqrt_block_size, sqrt_block_size, 1});
 
         uint64_t elapsed_ns = 0;
         uint64_t times[2];
+        Group group_count = {B * T / sqrt_block_size, OC / sqrt_block_size, 1};
         for (int i = 0; i < repeat_times; i++) {
-            vkQueueSubmit(launcher.queue, 1, &launcher.submit_info, VK_NULL_HANDLE);
-            vkQueueWaitIdle(launcher.queue);
-            vkGetQueryPoolResults(context.device.logical_device, queryPool, 0, 2, 2 * sizeof(uint64_t), times, sizeof(uint64_t), VK_QUERY_RESULT_64_BIT);
+            launch_kernel(&context, &memory, &kernel, &launcher,
+                          4, shapes, group_count, i == 0);
+            vkGetQueryPoolResults(context.device.logical_device, launcher.query_pool, 0, 2, 2 * sizeof(uint64_t), times, sizeof(uint64_t), VK_QUERY_RESULT_64_BIT);
             elapsed_ns += times[1] - times[0];
         }
         float elapsed_time = (float)elapsed_ns / 1e6;
@@ -216,8 +172,6 @@ int main(int argc, char** argv) {
 
     vkUnmapMemory(context.device.logical_device, memory.heap);
     d_out = d_inp = d_weight = d_bias = NULL;
-
-    vkDestroyQueryPool(context.device.logical_device, queryPool, NULL);
 
     destroy_launcher(&context, &launcher);
     destroy_kernel(&context, &kernel);

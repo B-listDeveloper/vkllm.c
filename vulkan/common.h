@@ -1,13 +1,14 @@
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <vulkan/vulkan.h>
 
-typedef struct Workgroup {
+typedef struct Group {
     uint32_t x;
     uint32_t y;
     uint32_t z;
-} Workgroup;
+} Group;
 
 typedef struct Pipeline {
     VkPipeline pipeline;
@@ -20,6 +21,10 @@ typedef struct Launcher {
     VkCommandBufferBeginInfo begin_info;
     VkSubmitInfo submit_info;
     VkQueue queue;
+#ifdef TIMER
+    VkQueryPool query_pool;
+#endif
+    bool recorded;
 } Launcher;
 
 typedef struct Kernel {
@@ -282,7 +287,7 @@ void init_kernel(Context* context, Memory* memory, Kernel* kernel) {
     vkCreatePipelineLayout(context->device.logical_device, &pipeline_layout_info, NULL, &kernel->layout);
 }
 
-void append_shader(Context* context, Kernel* kernel, const char* filename, Workgroup wg_sizes) {
+void append_shader(Context* context, Kernel* kernel, const char* filename, Group wg_sizes) {
     FILE* shader_file = fopen(filename, "rb");
 
     fseek(shader_file, 0, SEEK_END);
@@ -308,7 +313,7 @@ void append_shader(Context* context, Kernel* kernel, const char* filename, Workg
     VkSpecializationInfo workgroup_info = {0};
     workgroup_info.mapEntryCount = 3;
     workgroup_info.pMapEntries = entries;
-    workgroup_info.dataSize = sizeof(Workgroup);
+    workgroup_info.dataSize = sizeof(Group);
     workgroup_info.pData = &wg_sizes;
 
     VkComputePipelineCreateInfo pipeline_info = {0};
@@ -333,6 +338,8 @@ void destroy_kernel(Context* context, Kernel* kernel) {
 }
 
 void init_launcher(Context* context, Launcher* launcher) {
+    launcher->recorded = false;
+
     VkCommandPoolCreateInfo pool_info = {0};
     pool_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
     pool_info.queueFamilyIndex = context->device.queue_family_index;
@@ -357,9 +364,57 @@ void init_launcher(Context* context, Launcher* launcher) {
     launcher->submit_info.pCommandBuffers = &launcher->command_buffer;
 
     vkGetDeviceQueue(context->device.logical_device, context->device.queue_family_index, 0, &launcher->queue);
+
+#ifdef TIMER
+    VkQueryPoolCreateInfo query_pool_info = {0};
+    query_pool_info.sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO;
+    query_pool_info.queryType = VK_QUERY_TYPE_TIMESTAMP;
+    query_pool_info.queryCount = 2;  // start and stop
+
+    if (vkCreateQueryPool(context->device.logical_device, &query_pool_info, NULL, &launcher->query_pool) != VK_SUCCESS) {
+        printf("Failed to create query pool!\n");
+        exit(EXIT_FAILURE);
+    }
+#endif
+}
+
+void launch_kernel(Context* context, Memory* memory,
+                   Kernel* kernel, Launcher* launcher,
+                   uint32_t num_constants, uint32_t* constants,
+                   Group group_counts,
+                   bool force_reset) {
+    uint32_t action = force_reset ? 0 : (launcher->recorded ? 2 : 1);
+    uint32_t constant_size = num_constants * sizeof(uint32_t);
+
+    switch (action) {
+    case 0:
+        vkResetCommandBuffer(launcher->command_buffer, 0);
+    case 1:
+        vkBeginCommandBuffer(launcher->command_buffer, &launcher->begin_info);
+#ifdef TIMER
+        vkCmdResetQueryPool(launcher->command_buffer, launcher->query_pool, 0, 2);
+        vkCmdWriteTimestamp(launcher->command_buffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, launcher->query_pool, 0);
+#endif
+        vkCmdBindPipeline(launcher->command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, kernel->pipeline);
+        vkCmdBindDescriptorSets(launcher->command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, kernel->layout, 0, 1, &memory->set, 0, NULL);
+        vkCmdPushConstants(launcher->command_buffer, kernel->layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, constant_size, constants);
+        vkCmdDispatch(launcher->command_buffer, group_counts.x, group_counts.y, group_counts.z); //B * T / 16, OC / 16, 1);
+#ifdef TIMER
+        vkCmdWriteTimestamp(launcher->command_buffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, launcher->query_pool, 1);
+#endif
+        vkEndCommandBuffer(launcher->command_buffer);
+
+        launcher->recorded = true;
+    default:
+        vkQueueSubmit(launcher->queue, 1, &launcher->submit_info, VK_NULL_HANDLE);
+        vkQueueWaitIdle(launcher->queue);
+    }
 }
 
 void destroy_launcher(Context* context, Launcher* launcher) {
+#ifdef TIMER
+    vkDestroyQueryPool(context->device.logical_device, launcher->query_pool, NULL);
+#endif
     vkFreeCommandBuffers(context->device.logical_device, launcher->command_pool, 1, &launcher->command_buffer);
     vkDestroyCommandPool(context->device.logical_device, launcher->command_pool, NULL);
 }

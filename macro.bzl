@@ -15,6 +15,7 @@ def test_shader(name):
         ],
         copts = [
             "-O3",
+            "-DTIMER",
             "-fopenmp",
         ],
         linkopts = [
