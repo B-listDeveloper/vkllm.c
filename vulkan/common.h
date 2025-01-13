@@ -10,11 +10,6 @@ typedef struct Group {
     uint32_t z;
 } Group;
 
-typedef struct Pipeline {
-    VkPipeline pipeline;
-    struct Pipeline* next;
-} Pipeline;
-
 typedef struct Launcher {
     VkCommandPool command_pool;
     VkCommandBuffer command_buffer;
@@ -29,9 +24,9 @@ typedef struct Launcher {
 
 typedef struct Kernel {
     VkPipelineLayout layout;
-    // Pipeline* pipelines;
-    VkPipeline pipeline;
-    uint32_t pipeline_count;
+    VkPipeline* pipelines;
+    uint32_t reserved;
+    uint32_t count;
 } Kernel;
 
 typedef struct Memory {
@@ -270,7 +265,9 @@ void free_memory(Context* context, Memory* memory) {
 }
 
 void init_kernel(Context* context, Memory* memory, Kernel* kernel) {
-    kernel->pipeline_count = 0;
+    kernel->count = 0;
+    kernel->reserved = 1;
+    kernel->pipelines = malloc(sizeof(VkPipeline));
 
     VkPushConstantRange range = {0};
     range.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
@@ -288,6 +285,12 @@ void init_kernel(Context* context, Memory* memory, Kernel* kernel) {
 }
 
 void append_shader(Context* context, Kernel* kernel, const char* filename, Group wg_sizes) {
+    if (kernel->reserved == kernel->count) {
+        kernel->reserved *= 2;
+        kernel->pipelines = realloc(
+            kernel->pipelines, kernel->reserved * sizeof(VkPipeline));
+    }
+
     FILE* shader_file = fopen(filename, "rb");
 
     fseek(shader_file, 0, SEEK_END);
@@ -325,16 +328,20 @@ void append_shader(Context* context, Kernel* kernel, const char* filename, Group
     pipeline_info.stage.pSpecializationInfo = &workgroup_info;
     pipeline_info.layout = kernel->layout;
 
-    vkCreateComputePipelines(context->device.logical_device, VK_NULL_HANDLE, 1, &pipeline_info, NULL, &kernel->pipeline);
-    kernel->pipeline_count++;
+    vkCreateComputePipelines(context->device.logical_device, VK_NULL_HANDLE, 1,
+                             &pipeline_info, NULL, &kernel->pipelines[kernel->count++]);
 
     // https://github.com/blurrypiano/littleVulkanEngine/issues/29
     vkDestroyShaderModule(context->device.logical_device, shader, NULL);
 }
 
 void destroy_kernel(Context* context, Kernel* kernel) {
-    vkDestroyPipeline(context->device.logical_device, kernel->pipeline, NULL);
+    for (int i = 0; i < kernel->count; i++) {
+        vkDestroyPipeline(context->device.logical_device, kernel->pipelines[i], NULL);
+    }
     vkDestroyPipelineLayout(context->device.logical_device, kernel->layout, NULL);
+
+    free(kernel->pipelines);
 }
 
 void init_launcher(Context* context, Launcher* launcher) {
@@ -395,10 +402,16 @@ void launch_kernel(Context* context, Memory* memory,
         vkCmdResetQueryPool(launcher->command_buffer, launcher->query_pool, 0, 2);
         vkCmdWriteTimestamp(launcher->command_buffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, launcher->query_pool, 0);
 #endif
-        vkCmdBindPipeline(launcher->command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, kernel->pipeline);
         vkCmdBindDescriptorSets(launcher->command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, kernel->layout, 0, 1, &memory->set, 0, NULL);
         vkCmdPushConstants(launcher->command_buffer, kernel->layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, constant_size, constants);
-        vkCmdDispatch(launcher->command_buffer, group_counts.x, group_counts.y, group_counts.z); //B * T / 16, OC / 16, 1);
+        for (int i = 0; i < kernel->count; i++) {
+            vkCmdBindPipeline(launcher->command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, kernel->pipelines[i]);
+            vkCmdDispatch(launcher->command_buffer, group_counts.x, group_counts.y, group_counts.z);
+            vkCmdPipelineBarrier(
+                launcher->command_buffer, VK_SHADER_STAGE_COMPUTE_BIT, VK_SHADER_STAGE_COMPUTE_BIT,
+                0, 0, NULL, 0, NULL, 0, NULL
+            );
+        }
 #ifdef TIMER
         vkCmdWriteTimestamp(launcher->command_buffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, launcher->query_pool, 1);
 #endif
