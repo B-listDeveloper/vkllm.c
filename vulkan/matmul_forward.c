@@ -33,6 +33,25 @@ void matmul_forward_cpu(float* out,
 }
 
 // ----------------------------------------------------------------------------
+// kernel version dispatch
+
+void select_kernel(int kernel_num,
+                   Context* context, Kernel* kernel,
+                   int B, int T, int C, int OC,
+                   const int sqrt_block_size) {
+    switch (kernel_num) {
+    case 1:
+        append_shader(context, kernel,
+                      "shaders/matmul_forward_shader1.spv",
+                      (Group){sqrt_block_size, sqrt_block_size, 1});
+        break;
+    default:
+        printf("Invalid kernel number\n");
+        exit(EXIT_FAILURE);
+    }
+}
+
+// ----------------------------------------------------------------------------
 // random utils
 
 float* make_random_float(int N) {
@@ -107,7 +126,14 @@ int main(int argc, char** argv) {
 
     Kernel kernel;
     init_kernel(&context, &memory, &kernel);
-    append_shader(&context, &kernel, filename, (Group){16, 16, 1});
+
+    // read kernel_num from command line
+    int kernel_num = 1;
+    if (argc > 1) {
+        kernel_num = atoi(argv[1]);
+    }
+    select_kernel(kernel_num, &context, &kernel, B, T, C, OC, 16);
+    printf("Using kernel %d\n", kernel_num);
 
     Launcher launcher;
     init_launcher(&context, &launcher);
@@ -141,8 +167,7 @@ int main(int argc, char** argv) {
 
         destroy_kernel(&context, &kernel);
         init_kernel(&context, &memory, &kernel);
-        append_shader(&context, &kernel, filename,
-                      (Group){sqrt_block_size, sqrt_block_size, 1});
+        select_kernel(kernel_num, &context, &kernel, B, T, C, OC, sqrt_block_size);
 
         uint64_t elapsed_ns = 0;
         uint64_t times[2];
