@@ -64,6 +64,17 @@ void select_kernel(int kernel_num,
                       (Group){CEIL_DIV(B * T, block_size), 1, 1},
                       (Group){block_size, 1, 1});
         break;
+    case 2:
+        append_shader(context, kernel, "shaders/layernorm_forward_mean_shader2.spv",
+                      (Group){B * T, 1, 1},
+                      (Group){block_size, 1, 1});
+        append_shader(context, kernel, "shaders/layernorm_forward_rstd_shader2.spv",
+                      (Group){B * T, 1, 1},
+                      (Group){block_size, 1, 1});
+        append_shader(context, kernel, "shaders/layernorm_forward_norm_shader2.spv",
+                      (Group){CEIL_DIV(B * T * C, 256), 1, 1},
+                      (Group){256, 1, 1});
+        break;
     default:
         printf("Invalid kernel number\n");
         exit(EXIT_FAILURE);

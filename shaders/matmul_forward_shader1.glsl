@@ -34,7 +34,7 @@ void main() {
 
     if (bt < BT && oc < OC) {
         const uint b = bt / BT;
-        const uint t = bt - BT * (bt / BT);  // uint(mod(bt, BT))
+        const uint t = bt % BT;
         const uint weight_oc_offset = oc * C;
         const uint inp_bt_offset = b * BT * C + t * C;
         float val = bias[oc];
