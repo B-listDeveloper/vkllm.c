@@ -60,8 +60,8 @@ void select_kernel(int kernel_num,
                    const int block_size) {
     switch (kernel_num) {
     case 1:
-        append_shader(context, kernel,
-                      "shaders/layernorm_forward_shader1.spv",
+        append_shader(context, kernel, "shaders/layernorm_forward_shader1.spv",
+                      (Group){CEIL_DIV(B * T, block_size), 1, 1},
                       (Group){block_size, 1, 1});
         break;
     default:
@@ -153,8 +153,7 @@ int main(int argc, char** argv) {
     init_launcher(&context, &launcher);
 
     uint32_t shapes[] = { B, T, C };
-    launch_kernel(&context, &memory, &kernel, &launcher,
-                  3, shapes, (Group){CEIL_DIV(B * T, 256), 1, 1}, false);
+    launch_kernel(&context, &memory, &kernel, &launcher, 3, shapes, false);
 
     layernorm_forward_cpu(out, mean, rstd, inp, weight, bias, B, T, C);
     float* out_gpu = (float*)malloc(out_size);
@@ -185,10 +184,8 @@ int main(int argc, char** argv) {
 
         uint64_t elapsed_ns = 0;
         uint64_t times[2];
-        Group group_count = {CEIL_DIV(B * T, block_size), 1, 1};
         for (int i = 0; i < repeat_times; i++) {
-            launch_kernel(&context, &memory, &kernel, &launcher,
-                          3, shapes, group_count, i == 0);
+            launch_kernel(&context, &memory, &kernel, &launcher, 3, shapes, i == 0);
             vkGetQueryPoolResults(context.device.logical_device, launcher.query_pool, 0, 2, 2 * sizeof(uint64_t), times, sizeof(uint64_t), VK_QUERY_RESULT_64_BIT);
             elapsed_ns += times[1] - times[0];
         }

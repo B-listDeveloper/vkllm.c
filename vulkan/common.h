@@ -27,6 +27,7 @@ typedef struct Kernel {
     VkPipeline* pipelines;
     uint32_t reserved;
     uint32_t count;
+    Group* wg_counts;
 } Kernel;
 
 typedef struct Memory {
@@ -268,6 +269,7 @@ void init_kernel(Context* context, Memory* memory, Kernel* kernel) {
     kernel->count = 0;
     kernel->reserved = 1;
     kernel->pipelines = malloc(sizeof(VkPipeline));
+    kernel->wg_counts = malloc(sizeof(Group));
 
     VkPushConstantRange range = {0};
     range.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
@@ -284,11 +286,13 @@ void init_kernel(Context* context, Memory* memory, Kernel* kernel) {
     vkCreatePipelineLayout(context->device.logical_device, &pipeline_layout_info, NULL, &kernel->layout);
 }
 
-void append_shader(Context* context, Kernel* kernel, const char* filename, Group wg_sizes) {
+void append_shader(Context* context, Kernel* kernel, const char* filename, Group wg_count, Group wg_sizes) {
     if (kernel->reserved == kernel->count) {
         kernel->reserved *= 2;
         kernel->pipelines = realloc(
             kernel->pipelines, kernel->reserved * sizeof(VkPipeline));
+        kernel->wg_counts = realloc(
+            kernel->wg_counts, kernel->reserved * sizeof(Group));
     }
 
     FILE* shader_file = fopen(filename, "rb");
@@ -328,6 +332,7 @@ void append_shader(Context* context, Kernel* kernel, const char* filename, Group
     pipeline_info.stage.pSpecializationInfo = &workgroup_info;
     pipeline_info.layout = kernel->layout;
 
+    memcpy(&kernel->wg_counts[kernel->count], &wg_count, sizeof(Group));
     vkCreateComputePipelines(context->device.logical_device, VK_NULL_HANDLE, 1,
                              &pipeline_info, NULL, &kernel->pipelines[kernel->count++]);
 
@@ -342,6 +347,7 @@ void destroy_kernel(Context* context, Kernel* kernel) {
     vkDestroyPipelineLayout(context->device.logical_device, kernel->layout, NULL);
 
     free(kernel->pipelines);
+    free(kernel->wg_counts);
 }
 
 void init_launcher(Context* context, Launcher* launcher) {
@@ -388,7 +394,6 @@ void init_launcher(Context* context, Launcher* launcher) {
 void launch_kernel(Context* context, Memory* memory,
                    Kernel* kernel, Launcher* launcher,
                    uint32_t num_constants, uint32_t* constants,
-                   Group group_counts,
                    bool force_reset) {
     uint32_t action = force_reset ? 0 : (launcher->recorded ? 2 : 1);
     uint32_t constant_size = num_constants * sizeof(uint32_t);
@@ -406,11 +411,17 @@ void launch_kernel(Context* context, Memory* memory,
         vkCmdPushConstants(launcher->command_buffer, kernel->layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, constant_size, constants);
         for (int i = 0; i < kernel->count; i++) {
             vkCmdBindPipeline(launcher->command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, kernel->pipelines[i]);
-            vkCmdDispatch(launcher->command_buffer, group_counts.x, group_counts.y, group_counts.z);
-            vkCmdPipelineBarrier(
-                launcher->command_buffer, VK_SHADER_STAGE_COMPUTE_BIT, VK_SHADER_STAGE_COMPUTE_BIT,
-                0, 0, NULL, 0, NULL, 0, NULL
-            );
+            vkCmdDispatch(launcher->command_buffer, kernel->wg_counts[i].x, kernel->wg_counts[i].y, kernel->wg_counts[i].z);
+
+            // are barriers necessary?
+            if (i < kernel->count - 1) {
+                vkCmdPipelineBarrier(
+                    launcher->command_buffer,
+                    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                    0, 0, NULL, 0, NULL, 0, NULL
+                );
+            }
         }
 #ifdef TIMER
         vkCmdWriteTimestamp(launcher->command_buffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, launcher->query_pool, 1);
