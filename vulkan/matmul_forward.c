@@ -170,7 +170,6 @@ int main(int argc, char** argv) {
 
         uint64_t elapsed_ns = 0;
         uint64_t times[2];
-        Group group_count = {B * T / sqrt_block_size, OC / sqrt_block_size, 1};
         for (int i = 0; i < repeat_times; i++) {
             launch_kernel(&context, &memory, &kernel, &launcher, 4, shapes, i == 0);
             vkGetQueryPoolResults(context.device.logical_device, launcher.query_pool, 0, 2, 2 * sizeof(uint64_t), times, sizeof(uint64_t), VK_QUERY_RESULT_64_BIT);

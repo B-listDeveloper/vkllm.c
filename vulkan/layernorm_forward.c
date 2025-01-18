@@ -1,13 +1,11 @@
 /*
 version 1 is naive port from CPU code to shader: parallelizes over B, T, loops over C
 bazel run :layernorm_forward -- 1
+
+version 2 parallelizes over all of B,T,C
+bazel run :layernorm_forward -- 2
 */
-#include <math.h>
-#include <omp.h>
-
 #include "common.h"
-
-#define CEIL_DIV(M, N) (((M) + (N) - 1) / (N))
 
 // ----------------------------------------------------------------------------
 // CPU code reference
@@ -101,9 +99,9 @@ int main(int argc, char** argv) {
     init_context(&context);
 
     // memory allocation
-    const int32_t B = 8;
-    const int32_t T = 1024;
-    const int32_t C = 768;
+    const uint32_t B = 8;
+    const uint32_t T = 1024;
+    const uint32_t C = 768;
 
     const uint32_t out_size = B * T * C * sizeof(float);
     const uint32_t mean_size = B * T * sizeof(float);
@@ -123,12 +121,12 @@ int main(int argc, char** argv) {
     allocate_memory(&context, &memory, num_tensors, sizes);
 
     // create host memory of random numbers
-    float* out = (float*)malloc(B * T * C * sizeof(float));
-    float* mean = (float*)malloc(B * T * sizeof(float));
-    float* rstd = (float*)malloc(B * T * sizeof(float));
-    float* inp = make_random_float(B * T * C);
-    float* weight = make_random_float(C);
-    float* bias = make_random_float(C);
+    float* out = (float*)malloc(out_size);
+    float* mean = (float*)malloc(mean_size);
+    float* rstd = (float*)malloc(rstd_size);
+    float* inp = make_random_float(inp_size / sizeof(float));
+    float* weight = make_random_float(weight_size / sizeof(float));
+    float* bias = make_random_float(bias_size / sizeof(float));
 
     float* d_out;
     float* d_mean;

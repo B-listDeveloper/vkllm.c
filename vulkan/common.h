@@ -4,6 +4,8 @@
 #include <string.h>
 #include <vulkan/vulkan.h>
 
+#define CEIL_DIV(M, N) (((M) + (N) - 1) / (N))
+
 typedef struct Group {
     uint32_t x;
     uint32_t y;
