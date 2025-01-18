@@ -1,5 +1,7 @@
 load(":macro.bzl", "test_shader")
 
+test_shader(name = "attention_forward")
+
 test_shader(name = "layernorm_forward")
 
 test_shader(name = "matmul_forward")
