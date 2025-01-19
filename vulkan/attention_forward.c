@@ -2,9 +2,8 @@
 Kernels for attention forward pass.
 
 version 1 is naive port from CPU code to kernel, parallelize over batch, time, heads only
-./attention_forward 1
+bazel run :attention_forward -- 1
 */
-#include <math.h>
 
 #include "common.h"
 
@@ -29,7 +28,7 @@ void attention_forward_cpu(float* out, float* preatt, float* att,
                 float* att_bht = att + b * H * T * T + h * T * T + t * T;
 
                 // pass 1: calculate query dot key and maxval
-                float maxval = -10000.0f;  // TODO: something better
+                float maxval = -INFINITY;
                 for (int t2 = 0; t2 <= t; t2++) {
                     float* key_t2 = inp + b * T * C3 + t2 * C3 + h * hs + C;  // + C because it's key
 
@@ -104,17 +103,6 @@ void select_kernel(int kernel_num,
         printf("Invalid kernel number\n");
         exit(EXIT_FAILURE);
     }
-}
-
-// ----------------------------------------------------------------------------
-// random utils
-
-float* make_random_float(int N) {
-    float* arr = (float*)malloc(N * sizeof(float));
-    for (int i = 0; i < N; i++) {
-        arr[i] = ((float)rand() / (float)RAND_MAX) * 2.0 - 1.0;  // [-1, 1]
-    }
-    return arr;
 }
 
 // ----------------------------------------------------------------------------

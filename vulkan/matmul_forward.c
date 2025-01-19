@@ -1,7 +1,7 @@
 /*
 bazel run :matmul_forward -- 1
 */
-#include <math.h>
+
 #include <omp.h>
 
 #include "common.h"
@@ -52,34 +52,9 @@ void select_kernel(int kernel_num,
 }
 
 // ----------------------------------------------------------------------------
-// random utils
-
-float* make_random_float(int N) {
-    float* arr = (float*)malloc(N * sizeof(float));
-    for (int i = 0; i < N; i++) {
-        arr[i] = ((float)rand() / (float)RAND_MAX) * 2.0 - 1.0;  // [-1, 1]
-    }
-    return arr;
-}
-
-// ----------------------------------------------------------------------------
 
 int main(int argc, char** argv) {
     srand(0);
-
-    // read shader_num from command line
-    int shader_num = 1;
-    if (argc > 1) {
-        shader_num = atoi(argv[1]);
-    }
-
-    if (shader_num > 1) {
-        printf("Invalid shader number\n");
-        exit(EXIT_FAILURE);
-    }
-    printf("Using shader %d\n", shader_num);
-
-    char* filename = "shaders/matmul_forward_shader1.spv";
 
     Context context;
     init_context(&context);

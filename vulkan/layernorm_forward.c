@@ -5,6 +5,7 @@ bazel run :layernorm_forward -- 1
 version 2 parallelizes over all of B,T,C
 bazel run :layernorm_forward -- 2
 */
+
 #include "common.h"
 
 // ----------------------------------------------------------------------------
@@ -77,17 +78,6 @@ void select_kernel(int kernel_num,
         printf("Invalid kernel number\n");
         exit(EXIT_FAILURE);
     }
-}
-
-// ----------------------------------------------------------------------------
-// random utils
-
-float* make_random_float(int N) {
-    float* arr = (float*)malloc(N * sizeof(float));
-    for (int i = 0; i < N; i++) {
-        arr[i] = ((float)rand() / (float)RAND_MAX) * 2.0 - 1.0;  // [-1, 1]
-    }
-    return arr;
 }
 
 // ----------------------------------------------------------------------------
