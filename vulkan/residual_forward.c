@@ -44,9 +44,9 @@ int main(int argc, char** argv) {
     init_context(&context);
 
     // memory allocation
-    const int32_t B = 8;
-    const int32_t T = 1024;
-    const int32_t C = 768;
+    const uint32_t B = 8;
+    const uint32_t T = 1024;
+    const uint32_t C = 768;
 
     const uint32_t out_size = B * T * C * sizeof(float);
     const uint32_t inp1_size = B * T * C * sizeof(float);
@@ -73,7 +73,6 @@ int main(int argc, char** argv) {
     vkMapMemory(context.device.logical_device, memory.heap, offsets[0], sizes[0], 0, (void**)&d_out);
     vkMapMemory(context.device.logical_device, memory.heap, offsets[1], sizes[1], 0, (void**)&d_inp1);
     vkMapMemory(context.device.logical_device, memory.heap, offsets[2], sizes[2], 0, (void**)&d_inp2);
-    memcpy(d_out, out, out_size);
     memcpy(d_inp1, inp1, inp1_size);
     memcpy(d_inp2, inp2, inp2_size);
 

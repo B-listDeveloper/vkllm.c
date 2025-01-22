@@ -148,7 +148,6 @@ int main(int argc, char** argv) {
     vkMapMemory(context.device.logical_device, memory.heap, offsets[1], sizes[1], 0, (void**)&d_preatt);
     vkMapMemory(context.device.logical_device, memory.heap, offsets[2], sizes[2], 0, (void**)&d_att);
     vkMapMemory(context.device.logical_device, memory.heap, offsets[3], sizes[3], 0, (void**)&d_inp);
-    memcpy(d_out, out, out_size);
     memcpy(d_preatt, preatt, preatt_size);
     memcpy(d_att, att, att_size);
     memcpy(d_inp, inp, inp_size);

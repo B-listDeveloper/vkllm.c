@@ -94,7 +94,6 @@ int main(int argc, char** argv) {
 
     vkMapMemory(context.device.logical_device, memory.heap, offsets[0], sizes[0], 0, (void**)&d_out);
     vkMapMemory(context.device.logical_device, memory.heap, offsets[1], sizes[1], 0, (void**)&d_inp);
-    memcpy(d_out, out, out_size);
     memcpy(d_inp, inp, inp_size);
 
     Kernel kernel;
@@ -161,6 +160,14 @@ int main(int argc, char** argv) {
 
         printf("block_size %4d | time %f ms\n", block_size, elapsed_time / repeat_times);
     }
+
+    vkUnmapMemory(context.device.logical_device, memory.heap);
+    d_out = d_inp = NULL;
+
+    destroy_launcher(&context, &launcher);
+    destroy_kernel(&context, &kernel);
+    free_memory(&context, &memory);
+    destroy_context(&context);
 
     free(out);
     free(inp);

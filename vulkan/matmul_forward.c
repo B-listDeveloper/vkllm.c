@@ -94,7 +94,6 @@ int main(int argc, char** argv) {
     vkMapMemory(context.device.logical_device, memory.heap, offsets[1], sizes[1], 0, (void**)&d_inp);
     vkMapMemory(context.device.logical_device, memory.heap, offsets[2], sizes[2], 0, (void**)&d_weight);
     vkMapMemory(context.device.logical_device, memory.heap, offsets[3], sizes[3], 0, (void**)&d_bias);
-    memcpy(d_out, out, out_size);
     memcpy(d_inp, inp, inp_size);
     memcpy(d_weight, weight, weight_size);
     memcpy(d_bias, bias, bias_size);
