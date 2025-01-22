@@ -2,10 +2,10 @@
 Kernels for softmax forward pass.
 
 version 1 is naive port from CPU code to kernel: parallelizes over B, T, loops over C
-bazel run softmax_forward -- 1
+bazel run :softmax_forward -- 1
 
 version 2 is a fused kernel that parallelizes over all of B, T, C
-bazel run softmax_forward -- 2
+bazel run :softmax_forward -- 2
 */
 
 #include "common.h"

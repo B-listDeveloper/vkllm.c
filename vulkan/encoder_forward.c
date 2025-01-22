@@ -2,10 +2,10 @@
 Kernels for the positional encoder forward pass in GPT-2.
 
 version 1 is naive port from CPU code to kernel: parallelizes over B, T, loops over C
-bazel run positional_forward -- 1
+bazel run :encoder_forward -- 1
 
 version 2 is more optimized, parallelizes over all of B, T, C
-bazel run positional_forward -- 2
+bazel run :encoder_forward -- 2
 */
 
 #include "common.h"
@@ -52,6 +52,7 @@ void select_kernel(int kernel_num,
         exit(EXIT_FAILURE);
     }
 }
+
 // ----------------------------------------------------------------------------
 
 int main(int argc, char** argv) {
