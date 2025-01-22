@@ -456,3 +456,11 @@ float* make_random_float(int N) {
     }
     return arr;
 }
+
+int* make_random_int(int N, int V) {
+    int* arr = (int*)malloc(N * sizeof(int));
+    for (int i = 0; i < N; i++) {
+        arr[i] = rand() % V;
+    }
+    return arr;
+}
