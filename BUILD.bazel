@@ -2,6 +2,8 @@ load(":macro.bzl", "test_shader")
 
 test_shader(name = "attention_forward")
 
+test_shader(name = "crossentropy_forward")
+
 test_shader(name = "encoder_forward")
 
 test_shader(name = "gelu_forward")

@@ -449,6 +449,14 @@ void destroy_launcher(Context* context, Launcher* launcher) {
 // ----------------------------------------------------------------------------
 // random utils
 
+float* make_random_float_unit(int N) {
+    float *arr = (float*)malloc(N * sizeof(float));
+    for (int i = 0; i < N; i++) {
+        arr[i] = ((float)rand() / RAND_MAX);  // [0, 1]
+    }
+    return arr;
+}
+
 float* make_random_float(int N) {
     float* arr = (float*)malloc(N * sizeof(float));
     for (int i = 0; i < N; i++) {
