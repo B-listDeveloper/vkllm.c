@@ -12,6 +12,8 @@ test_shader(name = "gelu_forward")
 
 test_shader(name = "layernorm_forward")
 
+test_shader(name = "matmul_backward")
+
 test_shader(name = "matmul_forward")
 
 test_shader(name = "residual_forward")
